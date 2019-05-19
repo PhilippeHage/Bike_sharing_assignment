@@ -14,7 +14,6 @@
 # In[2]:
 
 
-# Importing the data
 import shutil
 from dask import dataframe as ddf
 import kaggle
@@ -24,31 +23,28 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 import dask.array as da
-
-# Feature Engineering 
+ 
 import warnings
 from scipy.stats import skew
 from dask_ml.preprocessing import DummyEncoder
 from sklearn.preprocessing import MinMaxScaler
 
-# Start a client
 from dask.distributed import Client, progress
 
-# Dask models
 from dask_ml.linear_model import LinearRegression
 from dask_ml.xgboost import XGBRegressor
 
-# Sklearn models
 import xgboost as xgb
 from sklearn.ensemble import RandomForestRegressor
 
-# Evaluation metrics
 from sklearn.metrics import r2_score
 from dask_ml.metrics import mean_squared_error as mse
 
-# Hyperparameter optimization
+import joblib
 from sklearn.model_selection import GridSearchCV
 from sklearn.externals.joblib import parallel_backend
+
+import time
 
 
 # ## Reading the Data
@@ -56,11 +52,18 @@ from sklearn.externals.joblib import parallel_backend
 # In[3]:
 
 
+start = time.time()
+start
+
+
+# In[4]:
+
+
 kaggle.api.authenticate()
 kaggle.api.dataset_download_files("marklvl/bike-sharing-dataset")
 
 
-# In[4]:
+# In[5]:
 
 
 zip_ref = zipfile.ZipFile("bike-sharing-dataset.zip", 'r')
@@ -71,7 +74,7 @@ zip_ref.extractall()
 zip_ref.close()
 
 
-# In[5]:
+# In[6]:
 
 
 shutil.move("day.csv", "data/day.csv")
@@ -80,26 +83,26 @@ shutil.move("Readme.txt", "data/Readme.txt")
 shutil.move("Bike-Sharing-Dataset.zip", "data/Bike-Sharing-Dataset.zip")
 
 
-# In[6]:
+# In[7]:
 
 
 day = ddf.read_csv("data/day.csv", parse_dates = True)
 hour = ddf.read_csv("data/hour.csv", parse_dates = True)
 
 
-# In[7]:
+# In[8]:
 
 
 day.head()
 
 
-# In[8]:
+# In[9]:
 
 
 hour.head()
 
 
-# In[9]:
+# In[10]:
 
 
 #To get the number of NAs in the original dataset
@@ -122,7 +125,7 @@ print(
 
 # ### Variable Names and Encoding
 
-# In[10]:
+# In[11]:
 
 
 day.rename(
@@ -155,7 +158,7 @@ hour.rename(
 ).compute()
 
 
-# In[11]:
+# In[12]:
 
 
 hour.head()
@@ -163,7 +166,7 @@ hour.head()
 
 # ## Frequencies
 
-# In[12]:
+# In[13]:
 
 
 plt.figure(figsize=(15, 6))
@@ -183,7 +186,7 @@ plt.xticks(ticks=(0, 1), labels=("2011", "2012"))
 plt.grid(which="major", axis="y")
 
 
-# In[13]:
+# In[14]:
 
 
 plt.figure(figsize=(15, 6))
@@ -217,7 +220,7 @@ plt.xticks(ticks=(0, 1, 2, 3, 3.5))
 plt.grid(which="major", axis="y")
 
 
-# In[14]:
+# In[15]:
 
 
 sns.catplot(
@@ -239,7 +242,7 @@ plt.axhline(hour.cnt.mean().compute(), ls="--", color="#a5a5a5")
 plt.text(0.5, hour.cnt.mean().compute() - 10, "Average", color="#a5a5a5")
 
 
-# In[15]:
+# In[16]:
 
 
 sns.catplot(
@@ -265,7 +268,7 @@ plt.text(0.5, hour.cnt.mean().compute() - 30, "Average", color="#a5a5a5")
 
 # Box plots are useful for getting an idea of the distribution of numerical features and detect potential outliers. Therefore, we use different box plots to see the different distributions of `total_count`, `casual` and `registrered`. It is clear that each variable has outliers, we deal with them in the Chapter Preprocessing.
 
-# In[16]:
+# In[17]:
 
 
 plt.subplots(figsize=(15, 6))
@@ -281,7 +284,7 @@ plt.title("Boxplots of count variables")
 
 # Additionally, we created box plot for the weather variables with the same purpose of the previous ones.
 
-# In[17]:
+# In[18]:
 
 
 plt.subplots(figsize=(15, 6))
@@ -299,7 +302,7 @@ plt.title("Boxplots of weather variables")
 
 # Another important step in the EDA, before feature engineering, is to see what the relationship is between potential predicting variables and the target variable. This gives us an idea of what features might be important for including in the model.
 
-# In[18]:
+# In[19]:
 
 
 plt.subplots(figsize=(15, 6))
@@ -335,7 +338,7 @@ plt.ylabel("Correlation")
 plt.title("Correlations of variables with target variable")
 
 
-# In[19]:
+# In[20]:
 
 
 plt.figure(figsize=(15, 6))
@@ -346,7 +349,7 @@ plt.title("Correlation Matrix")
 # Clearly, from above heatmap, we can se that the dataset has multicolinearity. `temp` and `atemp` are highly correlated.
 # Will need to drop one of them.
 
-# In[20]:
+# In[21]:
 
 
 # Visualize the relationship among all continous variables using pairplots
@@ -356,91 +359,6 @@ sns.pairplot(hour.compute(), hue="yr", vars=NumericFeatureList, height=3)
 
 # As we can see looking at the EDA and inspecting the datasets, the `hour` dataset holds the same information than `day` and with a lot more detail. Therefore we have decided to continue the analysis using onlt `hour` as our data.
 
-# ## Feature Engineering
-
-# ### Variable Creation
-
-# #### Average Activity
-
-# As seen in the EDA, rentals increase and decrease depending on the time of the day. Hence, we decided to bin the `hour` variable into three categories: `sleep_hours`, `work_hours` and `free_hours`.
-# 
-# According to a study made by Fortune.com, the average hours where citizens of Washington D.C. are asleep are from 11:30pm to 7:20am.
-# 
-# For `sleep_hours` we stretched that range a little more on the lower side because we think that even if people are not asleep per se, they might be home already since 9:00pm.
-# 
-# As for `work_hours` we used the regular work schedule in the US, consisting of 8 hours, from 9:00 to 17:00 during the working days.
-# 
-# And lastly `free_hours` consists of anything in between the last two during working days and everything but `sleep_hours` during the weekends.
-# 
-# _Source: http://fortune.com/2015/07/07/cities-sleep-patterns-health/_
-
-# #### Commute Schedule
-
-# We realized that during working days, most people could use the bike rentals to commute to work, therefore we created a new variable `is_commute`.
-# 
-# We took into consideration the rush commute hours in Washington D.C. accordint to a study by TripSavvy.com where they explain that the most common commute times in the city are from 6 a.m. to 9:30 a.m. and 3:30 p.m. to 6:30 p.m.
-# 
-# We used these timeframes to create the new variable taking into account the day of the week as well, since rush hour happens mostly from Monday to Friday.
-# 
-# _Source: https://www.tripsavvy.com/driving-times-from-dc-1040439_
-
-# #### Computed Apparent Temperature
-
-# We also saw that one of the most influencial factors for outdoor activities is the Wind Chill factor, meaning the temperature felt by the body as a result of wind speed and actual measured temperature.
-# 
-# The perceived temperature due to wind chill is lower than the actual air temperature for all temperature values where the formula used is valid (-50°F to 50°F).
-# 
-# Therefore we proceed to calculate the `wind_chill` variable given the formula:
-# <br/>
-# <br/>
-# <br/>
-# $$Wind Chill Temperature = 35.74 + 0.6215×Temp - 35.75×Wind^{0.16} + 0.4275×Temp×Wind^{0.16}$$
-# <br/>
-# <br/>
-# Note that all of the values are in Farenheit and miles per hour, so first of all we have to convert our values to those metrics.
-# 
-# _Source: http://mentalfloss.com/article/26730/how-wind-chill-calculated_
-
-# In order to do this, since our values are normalized we have to undo this, luckily we have the min and max values used for each normalization in the dataset description, being:
-# - min = -8, max = +39 for `temp`
-# - min = -16, max = +50 for `atemp`
-# - min = 0, max = +67 for `windspeed`
-# 
-# We will do this by using `MinMaxScaler` to set the range of values using the minimum and maximum above.
-
-# Now we convert those values to the desired ones for the formula using:
-# <br/>
-# <br/>
-# <br/>
-# $$(°C × 9/5) + 32 = °F$$
-# 
-# $$ kmh / 1.609 = mph $$
-# <br/>
-# <br/>
-
-# We can now proceed to calculating the `wind_chill` variable for our data.
-
-# On the other hand we have the heat index effect, which is the opposite of the wind chill effect. Meaning that it estimates the temperature felt by the body as a result of air temperature and relative humidity. Heat index is often referred to as humiture.
-# 
-# We will now create the variable `heat_index` using the following formula:
-# <br/>
-# <br/>
-# <br/>
-# $$HeatIndex = -42.379 + 2.04901523*Temp + 10.14333127*Hum - 0.22475541*Temp*Hum - 6.83783*10^{-3}*Temp^2-5.481717*10^{-2}*Hum^2+1.22874*10^{-3}*Temp^2*Hum + 8.5282*10^{-4}*Temp*Hum^2 - 1.99*10^{-6}*Temp^2*Hum^2$$
-# <br/>
-# <br/>
-# <br/>
-# _Source: https://weather.com/safety/heat/news/heat-index-feels-like-temperature-summer_
-
-# Now that we have `wind_chill` and `heat_index` we can proceed to calculate our version of apparent temperature or the temperature actually felt by the human body. Since the wind chill effect only happens when **[temperature < 35°F and windspeed > 5 mph]**, and the heat index effect only happens when **[temperature > 80°F and humidity > 40%]** we will create a new variable `atemp_x` taking into consideration this conditions and projecting the value of `atemp` otherwise.
-
-# <table><tr>
-# <td> <img src="https://d26tpo4cm8sb6k.cloudfront.net/img/wind-chill-old.png" alt="Wind Chill Chart" style="width: 500px;"/> </td>
-# <td> <img src="https://climate.ncsu.edu/images/climate/heat_index_stull.jpg" alt="Heat Index Chart" style="width: 500px;"/> </td>
-# </tr></table>
-
-# Now that we have our own apparent temperature that takes into consideration wind chill and the heat index, we will proceed to normalize it and drop the temporary variables in the next steps.
-
 # ## Preprocessing
 
 # ### Handling Outliers
@@ -449,7 +367,7 @@ sns.pairplot(hour.compute(), hue="yr", vars=NumericFeatureList, height=3)
 
 # Since the outliers remain after the normalization, we can now proceed if it is viable to remove them or just clip them to any range of interquartiles.
 
-# In[21]:
+# In[22]:
 
 
 plt.subplots(figsize=(15, 6))
@@ -460,7 +378,7 @@ plt.ylabel("Number of bikes rented")
 plt.title("Boxplots of weather variables")
 
 
-# In[22]:
+# In[23]:
 
 
 fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=(15, 6))
@@ -472,7 +390,7 @@ ax2.set_xticklabels([])
 
 # As we can see above, the outliers do seem to skew the data a little bit, and the percentage of rows that contain outliers seems to be small enough to remove them safely. We now proceed to remove those outliers. We will first try to clip them to the .98 IQR for `windspeed` and to the 0.01 IQR for `humidity` since they seem to the thresholds to remove the outliers.
 
-# In[23]:
+# In[24]:
 
 
 plt.subplots(figsize=(15, 6))
@@ -485,7 +403,7 @@ plt.title("Boxplots of weather variables")
 
 # Now the outliers have been removed by forcing their values inside the respective IQR for each variable.
 
-# In[24]:
+# In[25]:
 
 
 fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=(15, 6))
@@ -512,7 +430,7 @@ ax2.set_xticklabels([])
 
 # We will also drop all variables used to compute our `atemp_comp` variable.
 
-# In[25]:
+# In[26]:
 
 
 fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=(15, 6))
@@ -530,7 +448,7 @@ sns.lineplot(
 sns.lineplot(x="hr", y="cnt", hue="weekday", data=hour.compute(), ci=None, ax=ax2)
 
 
-# In[26]:
+# In[27]:
 
 
 del hour["casual"]
@@ -541,20 +459,20 @@ del hour["registered"]
 
 # First we check the data to see which variables will be dummified, in this case they are: `season`, `year`, `month`, `weather_condition` and `average_activity`.
 
-# In[27]:
+# In[28]:
 
 
 cat_variables = hour.dtypes[hour.dtypes == "object"].index
 cat_variables
 
 
-# In[28]:
+# In[29]:
 
 
 ddf_hour = hour.categorize()
 
 
-# In[29]:
+# In[30]:
 
 
 ddf_hour.head()
@@ -562,7 +480,7 @@ ddf_hour.head()
 
 # Now we proceed to dummify the selected variables to be able to be used in our models.
 
-# In[30]:
+# In[31]:
 
 
 hour = ddf.get_dummies(ddf_hour, columns=cat_variables)
@@ -573,7 +491,7 @@ print("The dataset now contains {} columns.".format(ddf_hour.shape[1]))
 
 # Now we will check if there is any skewness in our target variable, if so we will proceed to take the log in order to make it normally distributed.
 
-# In[31]:
+# In[32]:
 
 
 plt.subplots(figsize=(15, 6))
@@ -581,7 +499,7 @@ sns.distplot(ddf_hour.cnt.compute(), color="red")
 plt.title("Distribution of Total Count")
 
 
-# In[32]:
+# In[33]:
 
 
 ddf_hour.cnt = np.log1p(ddf_hour.cnt)
@@ -589,7 +507,7 @@ ddf_hour.cnt = np.log1p(ddf_hour.cnt)
 
 # As we can see, now the distribution of the target variable looks much more like a normally distributed one. This will help since several models we will use in our analysis do not perform well with skewed data.
 
-# In[33]:
+# In[34]:
 
 
 plt.subplots(figsize=(15, 6))
@@ -603,20 +521,20 @@ plt.title("Distribution of Log-transformed Total Count")
 # 
 # The fourth quarter begins in October 1st, therefore we set the cutoff point for our split on 2012/10/01.
 
-# In[34]:
+# In[35]:
 
 
 train = ddf_hour[: 15212 - 1]
 test = ddf_hour[15212 - 1 :]
 
 
-# In[35]:
+# In[36]:
 
 
 train.head()
 
 
-# In[36]:
+# In[37]:
 
 
 del train['dteday']
@@ -625,7 +543,7 @@ del test['dteday']
 
 # We divide the datasets into `X_train`, `X_test`, `y_train` and `y_test` to fit the models.
 
-# In[37]:
+# In[38]:
 
 
 X_train = train
@@ -634,27 +552,27 @@ y_train = train['cnt']
 y_test  = test['cnt']
 
 
-# In[38]:
+# In[39]:
 
 
 X_train.head()
 
 
-# In[39]:
+# In[40]:
 
 
 del X_train['cnt']
 del X_test['cnt']
 
 
-# In[40]:
+# In[41]:
 
 
 X = ddf_hour
 y = ddf_hour["cnt"]
 
 
-# In[41]:
+# In[42]:
 
 
 del X['dteday']
@@ -669,7 +587,7 @@ del X['cnt']
 
 # First, we need to create the client
 
-# In[42]:
+# In[43]:
 
 
 client = Client()
@@ -678,7 +596,7 @@ client
 
 # #### Linear Regression
 
-# In[43]:
+# In[44]:
 
 
 from scikitplot.metrics import plot_calibration_curve
@@ -686,45 +604,25 @@ from scikitplot.plotters import plot_learning_curve
 from scikitplot.estimators import plot_feature_importances
 
 
-# In[44]:
-
-
-lr = LinearRegression()
-lr_model = lr.fit(X_train.values, y_train.values)
-y_pred_lr = lr.predict(X_test.values)
-
-
 # In[45]:
 
 
-mse(y_test.values, y_pred_lr)
+lr = LinearRegression()
+with joblib.parallel_backend('dask'):
+    lr_model = lr.fit(X_train.values,y_train.values)
+    y_pred_lr = lr.predict(X_test.values)
 
 
 # In[46]:
 
 
-r2_score(y_test.values.compute(), y_pred_lr.compute())
+mse(y_test.values, y_pred_lr)
 
 
 # In[47]:
 
 
-def lr_plot():
-    fig, (ax1, ax2) = plt.subplots(ncols=2, figsize=(15, 4))
-    plot_learning_curve(lr, title="Learning Curve", X=X.compute(), y=y.compute(), ax=ax1)
-    sns.scatterplot(y_pred_lr.compute(), y_test.compute(), ax=ax2)
-    ax2.set_title("Regression Curve")
-    ax2.set_ylabel("Actual Values")
-    ax2.set_xlabel("Predicted Values")
-    fig.suptitle("Linear Regression", size=15)
-    X_plot = np.linspace(0, 8, 2)
-    Y_plot = X_plot
-    ax2.plot(X_plot, Y_plot, color="r")
-    ax2.text(0, 6, "R2:")
-    ax2.text(0.5, 6, lr_score)
-
-
-lr_plot()
+r2_score(y_test.values.compute(), y_pred_lr.compute())
 
 
 # ### Non Linear Models
@@ -747,8 +645,9 @@ rf = RandomForestRegressor(
     min_samples_leaf=2,
     max_depth=None,
 )
-rf_model = rf.fit(X_train.values, y_train.values)
-y_pred_rf = rf.predict(X_test.values)
+with joblib.parallel_backend('dask'):
+    rf_model = rf.fit(X_train.values,y_train.values)
+    y_pred_rf = rf.predict(X_test.values)
 
 
 # In[50]:
@@ -758,30 +657,9 @@ rf_score = round(r2_score(y_test, y_pred_rf), 4)
 print("Random Forest Regressor Regression R2: {}".format(rf_score))
 
 
-# In[51]:
-
-
-def rf_plot():
-    fig, (ax1, ax2) = plt.subplots(ncols=2, figsize=(15, 4))
-    plot_learning_curve(rf, title="Learning Curve", X=X, y=y, ax=ax1)
-    sns.scatterplot(y_pred_rf, y_test, ax=ax2)
-    ax2.set_title("Regression Curve")
-    ax2.set_ylabel("Actual Values")
-    ax2.set_xlabel("Predicted Values")
-    fig.suptitle("Random Forest Regressor", size=15)
-    X_plot = np.linspace(0, 8, 2)
-    Y_plot = X_plot
-    ax2.plot(X_plot, Y_plot, color="r")
-    ax2.text(0, 6, "R2:")
-    ax2.text(0.5, 6, rf_score)
-
-
-rf_plot()
-
-
 # ### XGBoost Regressor
 
-# In[52]:
+# In[51]:
 
 
 xgbr = XGBRegressor(max_depth=3, n_estimators=1000)
@@ -789,40 +667,29 @@ xgbr_model = xgbr.fit(X_train.values, y_train.values)
 y_pred_xgbr = xgbr.predict(X_test.values)
 
 
-# In[56]:
+# In[52]:
 
 
-xgbr_score = round(xgbr.score(X_test.compute(), y_test.compute()), 4)
-print("XGBoost Regressor R2: {}".format(xgbr_score))
+r2_score(y_test.values.compute(), y_pred_xgbr.compute())
+
+
+# ## Conclusion
+
+# After all the analysis we can say that we can condidently predict the number of bikes rented on a given day with an cross-validated accuracy of more than 91%.
+# 
+# In this particular case we argue that cross validation is not as necesary since we are dealing with time series data, therefore picking random rows to divide into `train` and  `test` is not the most accurate way to evaluate our models. Nevertheless even with cross validation the scores we got are equally good.
+# 
+# Curiously enough the first two appeared to be the least correlated to the target variable in the exploratory analysis. Contrary to our belief, the variables we created do not have as much predictive power as we thought.
+
+# In[53]:
+
+
+end = time.time()
 
 
 # In[54]:
 
 
-print(
-    "XGBoost Regressor CV R2: {}".format(round(cross_val_score(xgbr, X, y).mean(), 4))
-)
+Time = end - start
+print(Time)
 
-
-# In[ ]:
-
-
-def xgbr_plot():
-    fig, (ax1, ax2) = plt.subplots(ncols=2, figsize=(15, 4))
-    plot_learning_curve(xgbr, title="Learning Curve", X=X, y=y, ax=ax1)
-    sns.scatterplot(y_pred_xgbr, y_test, ax=ax2)
-    ax2.set_title("Regression Curve")
-    ax2.set_ylabel("Actual Values")
-    ax2.set_xlabel("Predicted Values")
-    fig.suptitle("XGBoost Regressor", size=15)
-    X_plot = np.linspace(0, 8, 2)
-    Y_plot = X_plot
-    ax2.plot(X_plot, Y_plot, color="r")
-    ax2.text(0, 6, "R2:")
-    ax2.text(0.5, 6, xgbr_score)
-
-
-xgbr_plot()
-
-
-# ## Conclusion
